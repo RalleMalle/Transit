@@ -1,0 +1,90 @@
+<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Hamburg Transit Radar</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{box-sizing:border-box}body{margin:0;font:14px system-ui,sans-serif;background:#0d1117;color:#e6edf3;display:flex;height:100vh}
+#side{width:350px;display:flex;flex-direction:column;background:#10161e;border-right:1px solid #222c38;z-index:1000}
+#map{flex:1}.leaflet-container{background:#0d1117}.dark .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.95) contrast(.9) saturate(.6)}header{padding:12px;border-bottom:1px solid #222c38}h1{font-size:17px;margin:0 0 4px}
+#clock{font-variant-numeric:tabular-nums;color:#8b98a8}#stats{margin-top:6px;color:#9fb0c3;font-size:12px;line-height:1.5}
+.ctl{padding:10px 12px;display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid #222c38}
+button,select,input{background:#1a232e;color:#e6edf3;border:1px solid #2b3846;border-radius:6px;padding:6px 8px;font:inherit}
+button.on{background:#2f7bff;border-color:#2f7bff}input{flex:1 1 100%}select{flex:1}
+#list{flex:1;overflow:auto}.row{padding:7px 12px;border-bottom:1px solid #1b2430;cursor:pointer;display:grid;grid-template-columns:auto 1fr auto;gap:2px 8px}
+.row:hover{background:#17202b}.badge{font-weight:700;border-radius:4px;padding:0 6px;color:#fff;text-align:center;min-width:42px}
+.sub{grid-column:1/4;font-size:11px;color:#8b98a8}#banner{display:none;position:absolute;top:10px;left:370px;right:10px;z-index:1200;background:#7a1f1f;padding:10px;border-radius:8px}
+.vi{background:none;border:0}.chips{padding:6px 12px;display:flex;flex-wrap:wrap;gap:4px;max-height:100px;overflow:auto;border-bottom:1px solid #222c38}.chip{border:1px solid var(--c);border-radius:12px;padding:1px 9px;font-size:12px;cursor:pointer;user-select:none}.chip.on{background:var(--c);color:#fff;font-weight:700}.vr{transition:transform .6s linear;transform-origin:center;line-height:0;filter:drop-shadow(0 0 2px #000a)}
+#tg{display:none}.leaflet-popup-content{font-size:13px;line-height:1.5}
+@media(max-width:700px){body{flex-direction:column-reverse}#side{width:100%;height:46vh}#banner{left:10px}#tg{display:inline-block}}
+</style></head><body>
+<div id="side"><header><h1>🚇 Hamburg Transit Radar</h1><div id="clock"></div><div id="stats"></div><div id="src" style="margin-top:4px;font-size:11px;color:#6f7f92"></div></header>
+<div class="ctl"><button data-t="all" class="on">Alle</button><button data-t="bus">Bus</button><button data-t="ubahn">U</button><button data-t="sbahn">S</button><button data-t="other">Sonst.</button>
+<input id="q" placeholder="Linie, Fahrziel oder Haltestelle suchen …">
+<button id="clr">Alle Linien</button><select id="stf"><option value="all">Alle Datenstände</option><option value="gps">Nur LIVE GPS</option><option value="calc">Nur LIVE – berechnet</option><option value="est">Nur Fahrplan (geschätzt)</option></select>
+<select id="iv"><option value="5">5 s</option><option value="10" selected>10 s</option><option value="20">20 s</option><option value="30">30 s</option><option value="0">manuell</option></select>
+<button id="rf">⟳</button><button id="th">◐ Karte</button><button id="fs">⛶</button><button id="hm">Hamburg</button></div>
+<div class="chips" id="chips"></div><div id="list"></div><div style="padding:6px 12px;font-size:10px;color:#6f7f92">Daten: HVV-Fahrplan (dl-de/by-2-0) · gtfs.de Echtzeit (CC BY-SA) · © OpenStreetMap-Mitwirkende</div></div>
+<div id="map"></div><div id="banner"></div>
+<script>
+const $=s=>document.querySelector(s);
+const map=L.map('map',{zoomControl:false}).setView([53.5511,9.9937],11);L.control.zoom({position:'bottomright'}).addTo(map);
+const tl=L.tileLayer('/tiles/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap-Mitwirkende'}).addTo(map);
+let theme='dark';$('#map').classList.add('dark');let tErr=0;tl.on('tileerror',()=>{if(++tErr===5)alert('Kartenkacheln konnten nicht geladen werden. Internetverbindung prüfen.')});const layer=L.layerGroup().addTo(map);
+const pos=(e,n)=>{const f=Math.min(1,Math.max(0,(n-e.t0)/e.dur));return[e.from[0]+(e.to[0]-e.from[0])*f,e.from[1]+(e.to[1]-e.from[1])*f]};
+let chipKey='';
+function chips(){const m=new Map();for(const e of V.values())m.set(e.v.l,e.v.ty);const ord={sbahn:0,ubahn:1,bus:2,other:3};
+ let arr=[...m].filter(([l,t])=>(F.t==='all'||t===F.t)&&(!F.q||l.toLowerCase().includes(F.q)||F.lines.has(l)));
+ arr.sort((a,b)=>ord[a[1]]-ord[b[1]]||a[0].localeCompare(b[0],'de',{numeric:true}));const more=Math.max(0,arr.length-300);arr=arr.slice(0,300);
+ const key=arr.map(x=>x[0]+(F.lines.has(x[0])?'*':'')).join('|')+more;$('#clr').textContent=F.lines.size?`Auswahl löschen (${F.lines.size})`:'Alle Linien';if(key===chipKey)return;chipKey=key;
+ $('#chips').innerHTML=arr.map(([l,t])=>`<span class="chip${F.lines.has(l)?' on':''}" data-l="${l}" style="--c:${COL[t]}">${l}</span>`).join('')+(more?`<span class="sub">… ${more} weitere – Suche nutzen</span>`:'')}
+const V=new Map(),F={t:'all',q:'',lines:new Set(),st:'all'};let iv=10,timer=null,sel=null;
+const COL={bus:'#ff5a36',ubahn:'#2f7bff',sbahn:'#22b455',other:'#9aa4b2'},LEN={bus:24,ubahn:44,sbahn:52,other:40},LBL={bus:'Bus',ubahn:'U-Bahn',sbahn:'S-Bahn',other:'Sonstige'};
+const sc=()=>{const z=map.getZoom();return z<11?.55:z<13?.85:z<15?1.25:1.8};
+function svg(t){const n=LEN[t],c=COL[t],cars=t==='bus'?1:t==='ubahn'?2:3,cl=n/cars,z=map.getZoom(),k=sc();
+let s=`<svg width="${10*k}" height="${n*k}" viewBox="0 0 10 ${n}"><rect x=".5" y=".5" width="9" height="${n-1}" rx="${t==='bus'?2:3.5}" fill="${c}" stroke="#0b0f14"/><rect x="2" y="1.5" width="6" height="3" rx="1" fill="#0b0f14" opacity=".85"/>`;
+for(let i=1;i<cars;i++)s+=`<line x1=".5" x2="9.5" y1="${i*cl}" y2="${i*cl}" stroke="#0b0f14"/>`;
+if(z>=14)for(let i=0;i<cars;i++){const a=i*cl+(i?2:6),b=(i+1)*cl-2;for(const x of[2,8])s+=`<line x1="${x}" x2="${x}" y1="${a}" y2="${b}" stroke="#fff" stroke-dasharray="2 1.2" opacity=".8"/>`}
+return s+'</svg>'}
+function icon(v,rot){const k=sc(),w=10*k,h=LEN[v.ty]*k;return L.divIcon({className:'vi',html:`<div class="vr" style="transform:rotate(${rot}deg)">${svg(v.ty)}</div>`,iconSize:[w,h],iconAnchor:[w/2,h/2]})}
+const ago=ts=>{const s=Math.max(0,Math.round(Date.now()/1000-ts));return s<60?`vor ${s} s`:`vor ${Math.round(s/60)} min`};
+const pop=v=>`<b style="color:${COL[v.ty]}">${LBL[v.ty]} ${v.l}</b> → ${v.h||'?'}<br>Position: ${v.dw?'an Haltestelle '+v.ns:'zwischen '+v.fs+' und '+v.ns}<br>(${v.la.toFixed(4)}, ${v.lo.toFixed(4)})<br>Nächste Haltestelle: ${v.ns}<br>Verspätung: ${v.dl==null?'k. A. (keine Echtzeitdaten)':(v.dl>0?'+':'')+v.dl+' min'}<br>Status: <b>${v.st}</b><br>Aktualisiert: ${ago(v.ts)}<br><a href="#" onclick="onlyLine('${v.l}');return false" style="color:#6aa8ff">Nur Linie ${v.l} anzeigen</a>`;
+const pass=v=>(F.t==='all'||v.ty===F.t)&&(!F.lines.size||F.lines.has(v.l))&&(F.st==='all'||({gps:'LIVE GPS',calc:'LIVE – berechnet',est:'FAHRPLAN – geschätzt'})[F.st]===v.st)&&(!F.q||(v.l+' '+v.h+' '+v.ns+' '+v.fs).toLowerCase().includes(F.q));
+function banner(m){const b=$('#banner');b.style.display=m?'block':'none';b.textContent=m||''}
+async function poll(){try{const s=await(await fetch('/api/status')).json();
+ if(!s.ready){banner(s.error||s.msg);return}
+ $('#src').textContent='Quellen: Fahrplan ✓'+(s.shapes?' · Geometrie ✓':'')+' · GTI '+(s.gti_configured?(s.gti_ok?'✓ '+s.gti_n+' Fahrten':'✗'):'–')+' · Feeds '+(Object.values(s.feeds||{}).map(f=>f.ok?`✓ GPS ${f.veh}, Verspät. ${f.matched}/${f.tu} zugeordnet`:'✗').join('; ')||'–');
+ banner(s.rt_configured&&!s.rt_ok?s.rt_err:(s.gti_configured&&!s.gti_ok&&s.gti_err?s.gti_err:''));
+ const hz=(iv||60)+2,d=await(await fetch('/api/vehicles?h='+hz)).json(),now=performance.now(),seen=Date.now();
+ for(const v of d.v){let e=V.get(v.id),from=[v.la,v.lo];
+  if(e&&e.to){const c=pos(e,now);if(Math.abs(c[0]-v.la)<.02&&Math.abs(c[1]-v.lo)<.03)from=c}
+  if(!e){e={m:null,rot:v.hd};V.set(v.id,e)}
+  const cr=((e.rot%360)+360)%360;e.rot+=((v.hd-cr+540)%360)-180;
+  Object.assign(e,{v,from,to:[v.la2,v.lo2],t0:now,dur:hz*1000,seen})}
+ for(const[id,e]of V)if(seen-e.seen>90000){if(e.m)layer.removeLayer(e.m);V.delete(id)}
+ render(true)}catch(x){banner('Backend nicht erreichbar: '+x.message)}}
+function render(full){const bd=map.getBounds().pad(.2);let c={bus:0,ubahn:0,sbahn:0,other:0},gps=0,calc=0,est=0,rows=[];
+for(const e of V.values()){const v=e.v;c[v.ty]++;v.st==='LIVE GPS'?gps++:v.st.startsWith('LIVE')?calc++:est++;const ok=pass(v);if(ok)rows.push(v);
+ const show=ok&&bd.contains([v.la,v.lo]);e.on=show;
+ if(show){if(!e.m){e.m=L.marker(pos(e,performance.now()),{icon:icon(v,e.rot),zIndexOffset:v.ty==='bus'?0:100}).bindPopup(()=>pop(e.v));e.m._e=e}
+  if(!layer.hasLayer(e.m))layer.addLayer(e.m);const el=e.m.getElement();if(el)el.firstChild.style.transform=`rotate(${e.rot}deg)`}
+ else if(e.m&&layer.hasLayer(e.m))layer.removeLayer(e.m)}
+$('#stats').innerHTML=`Busse ${c.bus} · U-Bahnen ${c.ubahn} · S-Bahnen ${c.sbahn} · Sonst. ${c.other}<br>📡 GPS: ${gps} · ⚡ live berechnet: ${calc} · 🕑 Fahrplan: ${est}`;
+if(!full)return;
+chips();
+rows.sort((a,b)=>a.l.localeCompare(b.l,'de',{numeric:true}));
+$('#list').innerHTML=rows.slice(0,300).map(v=>`<div class="row" data-id="${v.id}"><span class="badge" style="background:${COL[v.ty]}">${v.l}</span><span>${v.h||'?'}</span><span>${v.dl==null?'–':v.dl+'′'}</span><span class="sub">${LBL[v.ty]} · ${v.st} · ${ago(v.ts)}</span></div>`).join('')+(rows.length>300?`<div class="sub" style="padding:8px 12px">… ${rows.length-300} weitere (Filter nutzen)</div>`:'')}
+$('#list').onclick=ev=>{const r=ev.target.closest('.row');if(!r)return;const e=V.get(r.dataset.id);if(!e)return;
+ map.setView([e.v.la,e.v.lo],16);render(false);if(e.m){e.m.openPopup()}};
+let skip=0;(function frame(){const n=performance.now();let cnt=0;for(const e of V.values())if(e.on&&e.m)cnt++;
+if(cnt<=700||(skip^=1))for(const e of V.values())if(e.on&&e.m)e.m.setLatLng(pos(e,n));requestAnimationFrame(frame)})();
+map.on('moveend',()=>render(false));
+map.on('zoomend',()=>{for(const e of V.values())if(e.m)e.m.setIcon(icon(e.v,e.rot));render(false)});
+document.querySelectorAll('[data-t]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-t]').forEach(x=>x.classList.remove('on'));b.classList.add('on');F.t=b.dataset.t;render(true)});
+$('#q').oninput=e=>{F.q=e.target.value.toLowerCase().trim();render(true)};$('#chips').onclick=e=>{const c=e.target.closest('.chip');if(!c)return;const l=c.dataset.l;F.lines.has(l)?F.lines.delete(l):F.lines.add(l);render(true)};$('#clr').onclick=()=>{F.lines.clear();render(true)};window.onlyLine=l=>{F.lines=new Set([l]);map.closePopup();render(true)};
+$('#stf').onchange=e=>{F.st=e.target.value;render(true)};$('#rf').onclick=poll;$('#hm').onclick=()=>map.setView([53.5511,9.9937],11);
+$('#fs').onclick=()=>document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();
+$('#th').onclick=()=>{theme=theme==='dark'?'light':'dark';$('#map').classList.toggle('dark',theme==='dark')};
+$('#iv').onchange=e=>{iv=+e.target.value;clearInterval(timer);if(iv)timer=setInterval(poll,iv*1000);poll()};
+setInterval(()=>$('#clock').textContent=new Date().toLocaleTimeString('de-DE')+' Uhr',1000);
+timer=setInterval(poll,iv*1000);poll();
+</script></body></html>
