@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pandas
+numpy
+requests
+python-dotenv
+tzdata
+gtfs-realtime-bindings

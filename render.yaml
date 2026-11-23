@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: hamburg-transit-radar
+    runtime: docker
+    plan: free
+    region: frankfurt
+    healthCheckPath: /api/status
+    envVars:
+      - key: GTFS_URL
+        value: https://daten.transparenz.hamburg.de/Dataport.HmbTG.ZS.Webservice.GetRessource100/GetRessource100.svc/f0073555-962c-4d55-870e-b94bb676ad9d/Upload__hvv_Rohdaten_GTFS_Fpl_20260408.ZIP
+      - key: GTI_USER
+        sync: false
+      - key: GTI_PASS
+        sync: false
+      - key: GTI_HOST
+        value: https://gti.geofox.de

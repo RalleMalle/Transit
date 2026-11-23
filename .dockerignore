@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+.git
+__pycache__
+*.py[cod]
+log.txt
+data/gtfs.zip
+data/tiles
